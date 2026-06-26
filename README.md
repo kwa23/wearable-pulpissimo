@@ -11,7 +11,8 @@ Driver libraries for the L3G4200D and MPU-6050 gyroscope sensors on the ICDeC FP
 
 ## Struktur Proyek
 
-<img src="./img/tree.png" width="500" />
+<img width="348" height="678" alt="tree" src="https://github.com/user-attachments/assets/ea762d5c-7294-436f-a151-baf97e3b7435" />
+
 
 ## Cara Build & Run
 
