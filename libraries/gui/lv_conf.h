@@ -25,7 +25,7 @@
 #ifdef PLATFORM_LINUX
 #  define LV_COLOR_DEPTH  32
 #else
-#  define LV_COLOR_DEPTH  16
+#  define LV_COLOR_DEPTH  1  // 1 BPP for Monochrome OLED
 #endif
 
 /* =========================================================================
@@ -60,7 +60,7 @@
 #define LV_INDEV_DEF_READ_PERIOD          16    /* ms between polls  */
 #define LV_INDEV_DEF_DRAG_LIMIT           10    /* px                */
 #define LV_INDEV_DEF_DRAG_THROW           10
-#define LV_INDEV_DEF_LONG_PRESS_TIME     500    /* ms (align with gesture.h) */
+#define LV_INDEV_DEF_LONG_PRESS_TIME     600    /* ms (align with gesture.h) */
 #define LV_INDEV_DEF_LONG_PRESS_REP_TIME 200
 
 /* =========================================================================
@@ -81,8 +81,8 @@
  * Logging
  * ========================================================================= */
 #define LV_USE_LOG      0
-#define LV_LOG_LEVEL    LV_LOG_LEVEL_WARN
-#define LV_LOG_PRINTF   1
+//#define LV_LOG_LEVEL    LV_LOG_LEVEL_WARN
+//#define LV_LOG_PRINTF   1
 
 /* =========================================================================
  * Fonts — small sizes for 128×64 OLED
@@ -111,9 +111,9 @@
 /* =========================================================================
  * Themes
  * ========================================================================= */
-#define LV_USE_THEME_DEFAULT  0    /* Requires many widgets — skip */
+#define LV_USE_THEME_DEFAULT  1    /* Requires many widgets — skip */
 #define LV_USE_THEME_SIMPLE   0
-#define LV_USE_THEME_MONO     1    /* Ideal for monochrome OLED    */
+#define LV_USE_THEME_MONO     0    /* Ideal for monochrome OLED    */
 
 /* =========================================================================
  * Layouts
@@ -157,7 +157,7 @@
 #define LV_USE_LIST           0
 #define LV_USE_MENU           0
 #define LV_USE_MSGBOX         0
-#define LV_USE_ROLLER         0
+#define LV_USE_ROLLER         1
 #define LV_USE_SLIDER         0
 #define LV_USE_SPANGROUP      0
 #define LV_USE_SPINBOX        0    /* Would need textarea */

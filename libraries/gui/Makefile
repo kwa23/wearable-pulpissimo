@@ -39,7 +39,9 @@ APP_SRCS = \
     main.c \
     src/display_driver.c \
     src/input_driver.c \
-    src/gesture.c
+    src/gesture.c \
+    src/display_layer.c \
+    $(wildcard src/ui/*.c)
 
 LVGL_SRCS := $(shell find $(LVGL_DIR)/src -type f -name '*.c')
 ALL_SRCS := $(APP_SRCS) $(LVGL_SRCS)
@@ -47,6 +49,8 @@ ALL_SRCS := $(APP_SRCS) $(LVGL_SRCS)
 COMMON_CFLAGS = \
     -I. \
     -Isrc \
+    -Isrc/ui \
+    -Ilibs \
     -I$(LVGL_DIR) \
     -DLV_CONF_INCLUDE_SIMPLE \
     -DLV_LVGL_H_INCLUDE_SIMPLE

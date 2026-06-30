@@ -3,8 +3,8 @@
  * @brief   NusaCore RISC-V Wearable — GUI Framework Entry Point
  *
  * Build targets:
- *   make PLATFORM=linux    SDL2 window for development on Ubuntu/CachyOS
- *   make PLATFORM=riscv    pulp-runtime on NusaCore board
+ * make PLATFORM=linux    SDL2 window for development on Ubuntu/CachyOS
+ * make PLATFORM=riscv    pulp-runtime on NusaCore board
  */
 
 /* ── Standard library includes MUST be at the top, outside any function ── */
@@ -13,12 +13,16 @@
 
 #ifdef PLATFORM_LINUX
 #  include <unistd.h>   /* usleep()  */
+#  include <time.h>
+#  include <stdlib.h>
 #endif
 
 /* ── LVGL & project headers ─────────────────────────────────────────────── */
-#include "libs/lvgl/lvgl.h"
-#include "src/display_driver.h"
-#include "src/input_driver.h"
+#include "lvgl.h"
+#include "display_driver.h"
+#include "input_driver.h"
+#include "ui.h"             /* EEZ Studio generated master header */
+#include "display_layer.h"
 
 /* =========================================================================
  * RISC-V tick counter
@@ -32,7 +36,6 @@ volatile uint32_t g_tick_ms = 0;
 /* =========================================================================
  * Forward declarations
  * ========================================================================= */
-static void ui_create(void);
 static void on_gesture(const gesture_event_t *event);
 
 /* =========================================================================
@@ -68,19 +71,64 @@ int main(void)
     /* 4. Register application gesture handler */
     input_driver_set_gesture_cb(on_gesture);
 
-    /* 5. Build the UI */
-    ui_create();
-    printf("[MAIN] UI ready — entering event loop\n\n");
+    /* 5. Build the EEZ Studio UI layout */
+    ui_init();
+    printf("[MAIN] EEZ Studio UI layout ready — entering event loop\n\n");
+
+#ifdef PLATFORM_LINUX
+    uint32_t sim_ticks = 0;
+    int current_steps = 1420; // Starting baseline for step counts
+#endif
 
     /* 6. Event loop */
     while (1) {
 #ifdef PLATFORM_LINUX
-        lv_tick_inc(5);
+lv_tick_inc(5);
+        ui_tick();               /* EEZ runtime tick for processing animations/states */
+
+        // =====================================================================
+        // Host OS Clock Update (Linux Preview Path)
+        // =====================================================================
+        time_t raw_time = time(NULL);
+        struct tm *time_info = localtime(&raw_time);
+
+        // Call your display layer to handle clock & date rendering
+        ui_update_clock_and_date(time_info);
+
+        // =====================================================================
+        // Simulated Sensor Variance (Changes roughly every 1.5 seconds)
+        // =====================================================================
+        sim_ticks++;
+        if (sim_ticks % 300 == 0) {
+            // 1. Generate random math for fake sensors
+            int simulated_bpm = 65 + (rand() % 21);
+            int simulated_spo2 = 97 + (rand() % 3);
+            current_steps += (rand() % 5); 
+
+            // 2. Pass the raw data into your clean UI layer functions
+            ui_update_health_metrics(simulated_bpm, simulated_spo2, current_steps);
+            ui_update_activity_state(simulated_bpm);
+            ui_update_notifications(time_info);
+            
+            printf("[SIMULATOR] UI Updated -> HR: %d bpm | SpO2: %d%% | Steps: %d\n", 
+                   simulated_bpm, simulated_spo2, current_steps);
+        }
+
         lv_timer_handler();
         usleep(5000);            /* 5 ms sleep keeps CPU usage low      */
 #else
         lv_tick_inc(1);
         g_tick_ms++;
+        ui_tick();               /* EEZ runtime tick for processing animations/states */
+
+        // =====================================================================
+        // Real Hardware Sensor Update Path (RISC-V Bare-metal)
+        // =====================================================================
+        /* if (rtc_data_ready()) {
+            // Read hardware I2C logs here later...
+        }
+        */
+
         lv_timer_handler();
         /* TODO: replace busy-loop with 1 ms hardware timer ISR         */
 #endif
@@ -90,149 +138,62 @@ int main(void)
 }
 
 /* =========================================================================
- * UI — screen creation
- *
- * Three-tile tileview; swipe left/right to navigate.
- *   Tile 0  Clock   — time & date
- *   Tile 1  Health  — heart rate + SpO2
- *   Tile 2  Fitness — steps + activity
- *
- * See docs/extending.md → "Adding a new UI screen" to add more tiles.
- * =========================================================================
- */
-static lv_obj_t *g_tileview  = NULL;
-
-/* Per-screen label handles so sensor tasks can call lv_label_set_text() */
-static lv_obj_t *g_lbl_time  = NULL;
-static lv_obj_t *g_lbl_date  = NULL;
-static lv_obj_t *g_lbl_hr    = NULL;
-static lv_obj_t *g_lbl_spo2  = NULL;
-static lv_obj_t *g_lbl_steps = NULL;
-static lv_obj_t *g_lbl_act   = NULL;
-
-static void ui_create(void)
-{
-    lv_obj_t *scr = lv_screen_active();
-    lv_obj_set_style_bg_color(scr, lv_color_black(), 0);
-    lv_obj_set_style_bg_opa(scr, LV_OPA_COVER, 0);
-
-    g_tileview = lv_tileview_create(scr);
-    lv_obj_set_size(g_tileview, LV_PCT(100), LV_PCT(100));
-    lv_obj_set_style_bg_color(g_tileview, lv_color_black(), 0);
-    lv_obj_set_style_bg_opa(g_tileview, LV_OPA_COVER, 0);
-
-    /* ── Tile 0: Clock ──────────────────────────────────────────── */
-    lv_obj_t *t0 = lv_tileview_add_tile(g_tileview, 0, 0, LV_DIR_RIGHT);
-    lv_obj_set_style_bg_color(t0, lv_color_black(), 0);
-    lv_obj_set_style_bg_opa(g_tileview, LV_OPA_COVER, 0);
-
-    g_lbl_time = lv_label_create(t0);
-    lv_label_set_text(g_lbl_time, "00:00:00");
-    lv_obj_set_style_text_color(g_lbl_time, lv_color_white(), 0);
-    lv_obj_align(g_lbl_time, LV_ALIGN_CENTER, 0, -10);
-    lv_obj_set_style_bg_opa(g_tileview, LV_OPA_COVER, 0);
-
-    g_lbl_date = lv_label_create(t0);
-    lv_label_set_text(g_lbl_date, "01/01/2025");
-    lv_obj_set_style_text_color(g_lbl_date, lv_color_white(), 0);
-    lv_obj_align(g_lbl_date, LV_ALIGN_CENTER, 0, 8);
-    lv_obj_set_style_bg_opa(g_tileview, LV_OPA_COVER, 0);
-
-    /* ── Tile 1: Health ─────────────────────────────────────────── */
-    lv_obj_t *t1 = lv_tileview_add_tile(g_tileview, 1, 0,
-                                         LV_DIR_LEFT | LV_DIR_RIGHT);
-    lv_obj_set_style_bg_color(t1, lv_color_black(), 0);
-    lv_obj_set_style_bg_opa(g_tileview, LV_OPA_COVER, 0);
-
-    lv_obj_t *hdr1 = lv_label_create(t1);
-    lv_label_set_text(hdr1, "Health");
-    lv_obj_set_style_text_color(hdr1, lv_color_white(), 0);
-    lv_obj_align(hdr1, LV_ALIGN_TOP_MID, 0, 4);
-    lv_obj_set_style_bg_opa(g_tileview, LV_OPA_COVER, 0);
-
-    g_lbl_hr = lv_label_create(t1);
-    lv_label_set_text(g_lbl_hr, "HR: -- bpm");
-    lv_obj_set_style_text_color(g_lbl_hr, lv_color_white(), 0);
-    lv_obj_align(g_lbl_hr, LV_ALIGN_CENTER, 0, -8);
-    lv_obj_set_style_bg_opa(g_tileview, LV_OPA_COVER, 0);
-
-    g_lbl_spo2 = lv_label_create(t1);
-    lv_label_set_text(g_lbl_spo2, "SpO2: --%");
-    lv_obj_set_style_text_color(g_lbl_spo2, lv_color_white(), 0);
-    lv_obj_align(g_lbl_spo2, LV_ALIGN_CENTER, 0, 8);
-    lv_obj_set_style_bg_opa(g_tileview, LV_OPA_COVER, 0);
-
-    /* ── Tile 2: Fitness ────────────────────────────────────────── */
-    lv_obj_t *t2 = lv_tileview_add_tile(g_tileview, 2, 0, LV_DIR_LEFT);
-    lv_obj_set_style_bg_color(t2, lv_color_black(), 0);
-    lv_obj_set_style_bg_opa(g_tileview, LV_OPA_COVER, 0);
-
-    lv_obj_t *hdr2 = lv_label_create(t2);
-    lv_label_set_text(hdr2, "Fitness");
-    lv_obj_set_style_text_color(hdr2, lv_color_white(), 0);
-    lv_obj_align(hdr2, LV_ALIGN_TOP_MID, 0, 4);
-    lv_obj_set_style_bg_opa(g_tileview, LV_OPA_COVER, 0);
-
-    g_lbl_steps = lv_label_create(t2);
-    lv_label_set_text(g_lbl_steps, "Steps: 0");
-    lv_obj_set_style_text_color(g_lbl_steps, lv_color_white(), 0);
-    lv_obj_align(g_lbl_steps, LV_ALIGN_CENTER, 0, -8);
-    lv_obj_set_style_bg_opa(g_tileview, LV_OPA_COVER, 0);
-
-    g_lbl_act = lv_label_create(t2);
-    lv_label_set_text(g_lbl_act, "Activity: Idle");
-    lv_obj_set_style_text_color(g_lbl_act, lv_color_white(), 0);
-    lv_obj_align(g_lbl_act, LV_ALIGN_CENTER, 0, 8);
-    lv_obj_set_style_bg_opa(g_tileview, LV_OPA_COVER, 0);
-}
-
-/* =========================================================================
  * Gesture handler
  * Called by input_driver when a gesture is recognised.
  * ========================================================================= */
 static int g_current_tile = 0;
-#define TILE_COUNT 3
+#define TILE_COUNT 6
 
 static void on_gesture(const gesture_event_t *event)
 {
+    // Safety check: ensure the EEZ layout objects are fully initialized first
+    if (objects.home_screen == NULL) return;
+
+    /* Retrieve the tileview dynamically. 
+     * Adjust the index '0' if your tileview is not the first child 
+     * of the home_screen in EEZ Studio. */
+    lv_obj_t *my_tileview = lv_obj_get_child(objects.home_screen, 0);
+    if (my_tileview == NULL) return; // Extra safety if child is missing
+
     switch (event->type) {
         case GESTURE_SWIPE_LEFT:
             if (g_current_tile < TILE_COUNT - 1) {
                 g_current_tile++;
-                lv_obj_set_tile_id(g_tileview,
-                                   (uint32_t)g_current_tile, 0,
-                                   LV_ANIM_ON);
-                printf("[APP] → tile %d\n", g_current_tile);
+                lv_obj_set_tile_id(my_tileview, (uint32_t)g_current_tile, 0, LV_ANIM_ON);
+                printf("[APP] Swiped Left -> Moving manually to Tile %d\n", g_current_tile);
             }
             break;
 
         case GESTURE_SWIPE_RIGHT:
             if (g_current_tile > 0) {
                 g_current_tile--;
-                lv_obj_set_tile_id(g_tileview,
-                                   (uint32_t)g_current_tile, 0,
-                                   LV_ANIM_ON);
-                printf("[APP] ← tile %d\n", g_current_tile);
+                lv_obj_set_tile_id(my_tileview, (uint32_t)g_current_tile, 0, LV_ANIM_ON);
+                printf("[APP] Swiped Right -> Moving manually to Tile %d\n", g_current_tile);
             }
             break;
 
         case GESTURE_CLICK:
-            printf("[APP] Click at (%d, %d)\n",
-                   event->end_x, event->end_y);
+            printf("[APP] Click at (%d, %d)\n", event->end_x, event->end_y);
             break;
 
+        // --- Added missing gestures from Snippet 1 ---
         case GESTURE_DOUBLE_CLICK:
             printf("[APP] Double-click — toggle backlight\n");
+            // Insert backlight toggle logic here, e.g.:
+            // lv_disp_set_brightness(lv_disp_get_default(), new_value);
             break;
 
         case GESTURE_LONG_PRESS:
             printf("[APP] Long press — open settings\n");
+            // Insert settings navigation logic here, e.g.:
+            // lv_obj_add_flag(settings_panel, LV_OBJ_FLAG_HIDDEN);
             break;
+        // ---------------------------------------------
 
         default:
             break;
     }
-}
+}   
 
 /* =========================================================================
  * pulp-runtime hook (RISC-V only)

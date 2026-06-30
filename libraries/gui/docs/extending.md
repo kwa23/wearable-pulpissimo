@@ -1,6 +1,6 @@
 # NusaCore GUI Framework — Extension Guide
 
-How to add new **input devices**, **output devices**, and **UI screen layers**
+How to add new **input devices**, **output devices**, and **EEZ Studio UI screens**
 to the framework without changing the rest of the codebase.
 
 ---
@@ -14,10 +14,9 @@ to the framework without changing the rest of the codebase.
 3. [Adding a new input device](#3-adding-a-new-input-device)
    - 3a. Different touchscreen controller (same gesture engine)
    - 3b. Physical push button (new LVGL indev type)
-4. [Adding a new UI screen layer](#4-adding-a-new-ui-screen-layer)
-   - 4a. Step-by-step template
-   - 4b. Complete example: Clock & Date screen
-   - 4c. Complete example: Heart rate display
+4. [Adding a new UI screen layout via EEZ Studio](#4-adding-a-new-ui-screen-layer-via-eez-studio)
+   - 4a. Creating and exporting screens
+   - 4b. Binding manual gestures to your layout
 5. [How sensor tasks push data to the UI](#5-how-sensor-tasks-push-data-to-the-ui)
 
 ---
@@ -29,24 +28,23 @@ main.c
   ├── display_driver_init()   ← ONE display, registered once
   ├── input_driver_init()     ← ONE indev, registered once
   ├── input_driver_set_gesture_cb(on_gesture)
-  └── ui_create()             ← builds tileview with all screens
+  └── ui_create()             ← Loac generated layout from EEZ Studio
         ├── Tile 0: Clock
         ├── Tile 1: Health
-        └── Tile 2: Fitness     ← adding a tile = adding a screen
+        └── Tile 2: Fitness     ← Controlled via ui_tick() loop events
 ```
 
 **Rule of thumb:**
-- New *hardware output* → edit `src/display_driver.c` only
-- New *hardware input*  → edit `src/input_driver.c` only (gesture engine stays)
-- New *UI screen*       → edit `main.c` only (add a tile, an update function)
+- New *hardware output*             → edit `src/display_driver.c` only
+- New *hardware input*              → edit `src/input_driver.c` only (gesture engine stays)
+- New *UI layout modifications*     → edit in **EEZ Studio**, click **Export**, and adjust step animations inside `main.c` 
 
 ---
 
 ## 2. Adding a new output device (display)
 
 All display code lives in `src/display_driver.c`.
-The rest of the codebase only calls `display_driver_init()` and never
-knows what is behind it.
+The rest of the codebase only calls `display_driver_init()` and is abstract to the hardware layer.
 
 ### How `display_driver.c` works
 
@@ -113,7 +111,6 @@ uses at `LV_COLOR_DEPTH 16`. No pixel conversion needed.
 
 **Step 1 — Update `lv_conf.h`** if switching the RISC-V build to 16-bit:
 ```c
-// lv_conf.h — already set to 16 for RISC-V, nothing to change
 #define LV_COLOR_DEPTH  16
 ```
 
@@ -248,10 +245,9 @@ lv_group_add_obj(grp, my_button_widget);
 
 ---
 
-## 4. Adding a new UI screen layer
+## 4. Adding a new UI screen layer via EEZ Studio
 
-All UI code lives in `main.c`.
-Adding a screen means adding one tile to the tileview.
+Adding a screen means adding one tile/panel to the tileview.
 
 ### 4a. Step-by-step template
 
