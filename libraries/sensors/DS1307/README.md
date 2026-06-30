@@ -3,9 +3,9 @@
 Repositori ini berisi implementasi *driver bare-metal* bahasa C untuk membaca dan mengatur waktu pada sensor Real-Time Clock (RTC) DS1307. Driver ini dirancang khusus untuk berjalan di atas prosesor RISC-V NUSACORE pada *board* ARDUNESIA FPGA C10.
 
 ## Struktur File
-- `rtc.h`: Deklarasi struktur data API dan *header* fungsi.
+- `rtc.h`: Deklarasi struktur data API, error codes, dan *header* fungsi.
 - `rtc.c`: Logika utama *driver*, implementasi I2C Read/Write, konversi BCD, dan *bit-masking*.
-- `test.c`: Kode program utama (*entry point*) yang akan di-*flash* ke *board* FPGA untuk mencetak waktu via UART.
+- `test.c`: Kode program utama (*entry point*) yang akan di-*flash* ke *board* FPGA untuk mencetak waktu via UART. Dilengkapi error handling detail dan validasi per-register.
 - `test_host.c`: Unit test lokal berbasis memori untuk mensimulasikan pembacaan I2C dan memvalidasi perhitungan matematika BCD tanpa perlu menyambungkan *hardware*.
 - `build.sh` & `makefile`: *Script* otomatisasi *environment* dan kompilasi menggunakan PULP Runtime.
 
@@ -13,21 +13,28 @@ Repositori ini berisi implementasi *driver bare-metal* bahasa C untuk membaca da
 
 ## Penjelasan Logika 
 
-### 1. Konversi BCD (Binary-Coded Decimal)
+### 1. Address Handling (Chip-Select)
+Alamat I2C DS1307 adalah `0x68` (7-bit). Dalam format 8-bit yang digunakan oleh library PULP I2C:
+- **Write address:** `0xD0` (0x68 << 1 | 0)
+- **Read address:** `0xD1` (0x68 << 1 | 1)
+
+Address di-set melalui field `dev->cs` saat inisialisasi. Library `i2c.c` secara otomatis mengirim `dev->cs` sebagai address byte setelah START condition, dan melakukan OR dengan `0x1` saat operasi read. **Address tidak boleh dimasukkan ke dalam buffer data.**
+
+### 2. Konversi BCD (Binary-Coded Decimal)
 Sensor DS1307 hanya menerima dan mengirim data dalam format BCD. Agar API lebih ramah digunakan (*user-friendly*), struktur `rtc_time_t` sengaja dirancang menggunakan nilai **Desimal murni (0-99)**. Driver ini secara otomatis melakukan konversi `dec_to_bcd` saat menulis ke sensor (*set time*), dan `bcd_to_dec` saat membaca dari sensor (*get time*).
 
-### 2. Burst Read I2C (Auto-Increment Pointer)
+### 3. Burst Read I2C (Auto-Increment Pointer)
 Untuk efisiensi jalur komunikasi I2C, *driver* tidak memanggil alamat register satu per satu. Pembacaan dilakukan dengan teknik **Burst Read**:
-- Menembak titik awal register `0x00` (Seconds).
+- Menembak titik awal register `0x00` (Seconds) tanpa STOP condition (repeated start).
 - Menyedot 7 Byte data secara berurutan dalam satu kali tarikan (dari *Seconds* hingga *Year*) memanfaatkan fitur *Internal Auto-Increment Pointer* milik DS1307.
 
-### 3. Bit-Masking & Konfigurasi Hardware
+### 4. Bit-Masking & Konfigurasi Hardware
 Data mentah di dalam register DS1307 bercampur dengan bit konfigurasi. Driver ini menggunakan operasi bitwise untuk membersihkan data tersebut:
 - **`& 0x7F` pada Seconds:** Digunakan untuk membuang bit ke-7 (Clock Halt / CH) agar waktu murni terbaca, sekaligus memastikan bit CH selalu bernilai `0` saat *set time* agar osilator jam tetap menyala.
 - **`& 0x3F` pada Hours:** Digunakan untuk mengabaikan bit ke-6 (Mode 12/24), sehingga pembacaan secara konstan terkunci pada format **24-Jam**.
 
-### 4. Validasi Input
-Semua fungsi melakukan pengecekan parameter (`NULL` pointer) dan `rtc_set_time` memvalidasi range waktu sesuai datasheet DS1307 sebelum mengirim ke sensor. Setiap operasi I2C dicek *return value*-nya untuk mendeteksi kegagalan komunikasi bus.
+### 5. Error Handling
+Driver menggunakan **error code granular** untuk setiap titik kegagalan, sehingga debugging di board dapat langsung menunjukkan operasi mana yang gagal. Lihat tabel error codes di bawah.
 
 ---
 
@@ -46,10 +53,23 @@ typedef struct {
 } rtc_time_t;
 ```
 
+### Error Codes
+
+| Code | Macro | Keterangan |
+|------|-------|------------|
+| `0` | `RTC_OK` | Sukses, tidak ada error |
+| `-1` | `RTC_ERR_NULL_PTR` | Parameter NULL (pointer tidak valid) |
+| `-2` | `RTC_ERR_I2C_OPEN` | Gagal membuka peripheral I2C (`i2c_open`) |
+| `-3` | `RTC_ERR_VALIDATION` | Nilai waktu diluar range (cek datasheet DS1307) |
+| `-4` | `RTC_ERR_I2C_WRITE_SET` | Gagal `i2c_write` saat SET time (kirim 8 byte) |
+| `-5` | `RTC_ERR_I2C_WRITE_PTR` | Gagal `i2c_write` saat set register pointer (tahap 1 GET) |
+| `-6` | `RTC_ERR_I2C_WRITE_READ` | Gagal `i2c_write` address READ (tahap 2 GET) |
+| `-7` | `RTC_ERR_I2C_READ` | Gagal `i2c_read` burst 7 byte (tahap 2 GET) |
+
 ### Fungsi
 
 #### `int rtc_init(i2c_dev_t *dev_conf, i2c_t **i2c_handle)`
-Menginisialisasi hardware I2C Bus 0 untuk komunikasi dengan DS1307.
+Menginisialisasi hardware I2C Bus 0 untuk komunikasi dengan DS1307. Mengatur chip-select ke address `0xD0` dan baudrate ke 100 kHz.
 
 | Parameter | Deskripsi |
 |---|---|
@@ -58,16 +78,18 @@ Menginisialisasi hardware I2C Bus 0 untuk komunikasi dengan DS1307.
 
 | Return | Keterangan |
 |---|---|
-| `0` | Inisialisasi berhasil |
-| `-1` | Gagal (parameter `NULL` atau `i2c_open()` gagal) |
+| `RTC_OK` (0) | Inisialisasi berhasil |
+| `RTC_ERR_NULL_PTR` (-1) | Parameter `NULL` |
+| `RTC_ERR_I2C_OPEN` (-2) | `i2c_open()` gagal |
 
 **Contoh:**
 ```c
 i2c_dev_t rtc_dev_conf;
 i2c_t *rtc_handle;
 
-if (rtc_init(&rtc_dev_conf, &rtc_handle) != 0) {
-    // Handle error
+int rc = rtc_init(&rtc_dev_conf, &rtc_handle);
+if (rc != RTC_OK) {
+    printf("Init gagal! code: %d\n", rc);
 }
 ```
 
@@ -83,8 +105,10 @@ Mengatur waktu pada DS1307 sekaligus mengaktifkan osilator (clear bit CH).
 
 | Return | Keterangan |
 |---|---|
-| `0` | Waktu berhasil diset |
-| `-1` | Gagal (parameter `NULL`, range tidak valid, atau I2C write gagal) |
+| `RTC_OK` (0) | Waktu berhasil diset |
+| `RTC_ERR_NULL_PTR` (-1) | Parameter `NULL` |
+| `RTC_ERR_VALIDATION` (-3) | Nilai waktu diluar range |
+| `RTC_ERR_I2C_WRITE_SET` (-4) | I2C write gagal |
 
 **Validasi range otomatis:** seconds 0-59, minutes 0-59, hours 0-23, day 1-7, date 1-31, month 1-12, year 0-99.
 
@@ -100,8 +124,9 @@ rtc_time_t waktu = {
     .year    = 26       // 2026
 };
 
-if (rtc_set_time(rtc_handle, &waktu) != 0) {
-    // Handle error
+int rc = rtc_set_time(rtc_handle, &waktu);
+if (rc != RTC_OK) {
+    printf("Set time gagal! code: %d\n", rc);
 }
 ```
 
@@ -117,15 +142,20 @@ Membaca waktu terkini dari DS1307 menggunakan teknik *burst read* (7 byte sekali
 
 | Return | Keterangan |
 |---|---|
-| `0` | Waktu berhasil dibaca |
-| `-1` | Gagal (parameter `NULL` atau I2C read/write gagal) |
+| `RTC_OK` (0) | Waktu berhasil dibaca |
+| `RTC_ERR_NULL_PTR` (-1) | Parameter `NULL` |
+| `RTC_ERR_I2C_WRITE_PTR` (-5) | Gagal set register pointer |
+| `RTC_ERR_I2C_READ` (-7) | Gagal burst read 7 byte |
 
 **Contoh:**
 ```c
 rtc_time_t waktu_baca = {0};
 
-if (rtc_get_time(rtc_handle, &waktu_baca) == 0) {
+int rc = rtc_get_time(rtc_handle, &waktu_baca);
+if (rc == RTC_OK) {
     printf("%02d:%02d:%02d\n", waktu_baca.hours, waktu_baca.minutes, waktu_baca.seconds);
+} else {
+    printf("Read gagal! code: %d\n", rc);
 }
 ```
 
@@ -138,6 +168,21 @@ Fungsi konversi internal yang diekspos untuk keperluan unit testing.
 |---|---|---|
 | `dec_to_bcd` | Desimal (0-99) | BCD (0x00-0x99) |
 | `bcd_to_dec` | BCD (0x00-0x99) | Desimal (0-99) |
+
+---
+
+## Catatan Penting: Konvensi Library I2C PULPissimo
+
+Library `i2c.c` bawaan PULP Runtime memiliki konvensi khusus yang **berbeda** antara `i2c_write` dan `i2c_read`:
+
+| Aspek | `i2c_write()` | `i2c_read()` |
+|---|---|---|
+| **Return sukses** | `0` | `length` (jumlah byte dibaca) |
+| **Return gagal** | `5` (timeout) | `0` (timeout) |
+| **Parameter ke-4** | `send_stop`: `1`=kirim STOP, `0`=tanpa STOP | `pending`: `0`=kirim STOP, `1`=tanpa STOP |
+| **Address** | Otomatis dari `dev->cs` | Otomatis dari `dev->cs \| 0x1` |
+
+> **Jangan** memasukkan address byte ke dalam buffer `data[]`. Library menangani pengiriman address secara otomatis melalui field `dev->cs`.
 
 ---
 
@@ -159,8 +204,8 @@ rtc kalender
 
 ```bash
 # Kompilasi untuk board FPGA
-cd RTC/app
-source ./build.sh
+cd libraries/sensors/DS1307
+bash build.sh
 
 # Unit test lokal (tanpa hardware)
 gcc -o test_host test_host.c && ./test_host
