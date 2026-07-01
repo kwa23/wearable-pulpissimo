@@ -149,7 +149,12 @@ gyro_status_t l3g4200d_init(const l3g4200d_config_t *cfg)
     /* Configure I2C device */
     i2c_dev_init(&l3g4200d_state.i2c_dev);
     l3g4200d_state.i2c_dev.id           = cfg->i2c_id;
-    l3g4200d_state.i2c_dev.cs           = (cfg->i2c_addr << 1);  /* 8-bit address (7-bit addr << 1) */
+    /* 
+     * pulp-runtime i2c.c expects the 8-bit base address in dev->cs.
+     * It uses dev->cs directly for write and (dev->cs | 0x1) for read.
+     * Thus, we must shift the 7-bit address left by 1.
+     */
+    l3g4200d_state.i2c_dev.cs           = (cfg->i2c_addr << 1); 
     l3g4200d_state.i2c_dev.max_baudrate = cfg->i2c_freq;
 
     /* Open I2C bus */

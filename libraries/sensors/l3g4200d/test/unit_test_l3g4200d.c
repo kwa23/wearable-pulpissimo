@@ -179,18 +179,17 @@ void test_02_default_config_null(void) {
 }
 
 void test_03_init_i2c_address(void) {
-    printf("\n[TEST 03] init - I2C address 7-bit → 8-bit conversion\n");
+    printf("\n[TEST 03] init - I2C address passed as 7-bit (no shift)\n");
     reset_mock();
     l3g4200d_config_t cfg;
     l3g4200d_default_config(&cfg);
     l3g4200d_init(&cfg);
 
     /*
-     * 7-bit addr 0x68 shifted left = 0xD0 (208).
-     * But cs is signed char, so 0xD0 wraps to -48.
-     * The bit pattern is the same — verify with unsigned cast.
+     * PULPissimo i2c_open expects 7-bit address directly in .cs.
+     * The runtime handles R/W bit internally (consistent with MAX30102 driver).
      */
-    ASSERT_EQ("cs = 0x68 << 1 = 0xD0 (as byte)", (uint8_t)mock_dev_cs, 0xD0);
+    ASSERT_EQ("cs = 0x68 (7-bit, no shift)", (uint8_t)mock_dev_cs, 0x68);
     ASSERT_EQ("i2c_id = 0", mock_dev_id, 0);
 }
 

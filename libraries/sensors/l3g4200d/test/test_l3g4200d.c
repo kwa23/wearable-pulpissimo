@@ -7,6 +7,10 @@
  * communication via WHO_AM_I, and continuously reads gyroscope data
  * printing both raw values and degrees per second (°/s).
  *
+ * Features:
+ *   - Auto-detects I2C address (tries 0x68 then 0x69)
+ *   - Timeout protection (won't hang if sensor not connected)
+ *
  * Usage:
  *   make all SENSOR=l3g4200d
  *   make run SENSOR=l3g4200d platform=fpga
@@ -47,16 +51,28 @@ int main()
     }
     printf("\n");
 
-    /* ---- Test 2: Initialization ---- */
+    /* ---- Test 2: Initialization (auto-detect address) ---- */
     printf("[TEST 2] Initializing L3G4200D...\n");
-    printf("  (addr=0x%02X, will timeout if sensor not responding)\n", cfg.i2c_addr);
+
+    /* Try default address first (0x68) */
+    printf("  Trying addr=0x%02X...\n", cfg.i2c_addr);
     status = l3g4200d_init(&cfg);
+
+    /* If default fails, try alternate address (0x69) */
+    if (status != GYRO_OK) {
+        printf("  addr=0x%02X failed (err=%d), trying 0x%02X...\n",
+               cfg.i2c_addr, status, L3G4200D_I2C_ADDR_ALT);
+        cfg.i2c_addr = L3G4200D_I2C_ADDR_ALT;
+        status = l3g4200d_init(&cfg);
+    }
+
     printf("  l3g4200d_init returned: %d\n", status);
     if (status == GYRO_OK) {
-        printf("  PASS: Sensor initialized successfully\n");
+        printf("  PASS: Sensor initialized on addr=0x%02X\n", cfg.i2c_addr);
         pass_count++;
     } else {
-        printf("  FAIL: Initialization failed (err=%d)\n", status);
+        printf("  FAIL: Initialization failed on both addresses (err=%d)\n", status);
+        printf("  CHECK: Verify wiring, pull-ups on SDA/SCL, and SDO pin state\n");
         fail_count++;
         printf("\n========================================\n");
         printf(" RESULTS: %d PASSED, %d FAILED\n", pass_count, fail_count);

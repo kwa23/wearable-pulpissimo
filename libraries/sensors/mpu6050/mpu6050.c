@@ -146,7 +146,12 @@ gyro_status_t mpu6050_init(const mpu6050_config_t *cfg)
     /* Configure I2C device */
     i2c_dev_init(&mpu6050_state.i2c_dev);
     mpu6050_state.i2c_dev.id           = cfg->i2c_id;
-    mpu6050_state.i2c_dev.cs           = (cfg->i2c_addr << 1);  /* 8-bit address */
+    /* 
+     * pulp-runtime i2c.c expects the 8-bit base address in dev->cs.
+     * It uses dev->cs directly for write and (dev->cs | 0x1) for read.
+     * Thus, we must shift the 7-bit address left by 1.
+     */
+    mpu6050_state.i2c_dev.cs           = (cfg->i2c_addr << 1); 
     mpu6050_state.i2c_dev.max_baudrate = cfg->i2c_freq;
 
     /* Open I2C bus */

@@ -21,6 +21,8 @@ static uint8_t  last_write_reg, last_write_val;
 static uint8_t  last_read_addr;
 static int      write_call_count, read_call_count;
 static int      mock_i2c_fail;
+static int      mock_timeout_flag;
+static int      mock_timeout_count;
 static int      mock_dev_cs, mock_dev_id;
 static unsigned int mock_dev_baudrate;
 static i2c_t mock_i2c_handle;
@@ -42,7 +44,17 @@ i2c_t *i2c_open(i2c_dev_t *dev) {
 
 void i2c_close(i2c_t *i2c) { (void)i2c; }
 void i2c_settimeout(uint32_t t, bool r) { (void)t; (void)r; }
-bool i2c_managetimeoutflag(bool c) { (void)c; return false; }
+bool i2c_managetimeoutflag(bool c) {
+    (void)c;
+    if (mock_timeout_flag) {
+        if (mock_timeout_count > 0) {
+            mock_timeout_count--;
+            return true;
+        }
+        mock_timeout_flag = 0;
+    }
+    return false;
+}
 
 int i2c_write(i2c_t *dev, unsigned char *data, int length, int send_stop) {
     (void)dev;
@@ -107,6 +119,8 @@ static void reset_mock(void) {
     write_call_count = 0;
     read_call_count = 0;
     mock_i2c_fail = 0;
+    mock_timeout_flag = 0;
+    mock_timeout_count = 0;
     last_write_reg = 0;
     last_write_val = 0;
     mock_registers[0x75] = 0x68; /* WHO_AM_I */
@@ -137,12 +151,12 @@ void test_02_default_config_null(void) {
 }
 
 void test_03_init_i2c_address(void) {
-    printf("\n[TEST 03] init - I2C address 7-bit → 8-bit conversion\n");
+    printf("\n[TEST 03] init - I2C address passed as 7-bit (no shift)\n");
     reset_mock();
     mpu6050_config_t cfg;
     mpu6050_default_config(&cfg);
     mpu6050_init(&cfg);
-    ASSERT_EQ("cs = 0x68 << 1 = 0xD0 (as byte)", (uint8_t)mock_dev_cs, 0xD0);
+    ASSERT_EQ("cs = 0x68 (7-bit, no shift)", (uint8_t)mock_dev_cs, 0x68);
     ASSERT_EQ("i2c_id = 0", mock_dev_id, 0);
 }
 
@@ -432,6 +446,46 @@ void test_21_negative_raw_big_endian(void) {
     ASSERT_EQ("Z = 32767 (0x7FFF)", raw.z, 32767);
 }
 
+void test_22_i2c_timeout_retry(void) {
+    printf("\n[TEST 22] Timeout retry - recovers after transient timeout\n");
+    reset_mock();
+    mpu6050_config_t cfg;
+    mpu6050_default_config(&cfg);
+
+    mock_timeout_flag = 1;
+    mock_timeout_count = 1;
+    gyro_status_t s = mpu6050_init(&cfg);
+    ASSERT_EQ("init recovers after 1 timeout", s, GYRO_OK);
+}
+
+void test_23_i2c_timeout_exhausted(void) {
+    printf("\n[TEST 23] Timeout exhausted - init fails\n");
+    reset_mock();
+    mpu6050_config_t cfg;
+    mpu6050_default_config(&cfg);
+
+    mock_timeout_flag = 1;
+    mock_timeout_count = 100;
+    gyro_status_t s = mpu6050_init(&cfg);
+    /* Wake-up path converts GYRO_ERR_TIMEOUT to GYRO_ERR_CONFIG */
+    ASSERT_EQ("init fails with ERR_CONFIG (timeout)", s, GYRO_ERR_CONFIG);
+}
+
+void test_24_device_reset_sequence(void) {
+    printf("\n[TEST 24] init - Device reset sent before wake-up\n");
+    reset_mock();
+    mpu6050_config_t cfg;
+    mpu6050_default_config(&cfg);
+    mpu6050_init(&cfg);
+
+    /*
+     * After init, PWR_MGMT_1 should be 0x00 (awake).
+     * The device reset (0x80) was sent first, then wake (0x00).
+     * Since mock records final register value, we verify 0x00.
+     */
+    ASSERT_EQ("PWR_MGMT_1 final = 0x00 (awake)", mock_registers[0x6B], 0x00);
+}
+
 /* =========================================================================
  * MAIN
  * ========================================================================= */
@@ -463,6 +517,9 @@ int main(void) {
     test_19_null_pointers();
     test_20_i2c_failure();
     test_21_negative_raw_big_endian();
+    test_22_i2c_timeout_retry();
+    test_23_i2c_timeout_exhausted();
+    test_24_device_reset_sequence();
 
     printf("\n══════════════════════════════════════════════\n");
     printf("  TOTAL: %d passed, %d failed (of %d)\n",
